@@ -1,0 +1,18 @@
+---
+title: "Exposure analysis to simulation - example"
+output: html_notebook
+---
+
+# Illustrative non-cat exposure analysis to loss simulation example
+
+Using a simplified, one line of business example, this notebook will:
+
+- Perform an exposure analysis to estimate expected losses to excess of loss reinsurance layers
+- Squish parametric ground up loss distributions by policy limit into a single piecewise linear distribution
+- MAYBE: adjust piecewise linear distribution for custom view of large losses
+- Simulate ground up losses using the collective risk model with frequency contagion parameter
+
+```{r setup}
+
+```
+
