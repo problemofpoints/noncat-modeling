@@ -13,6 +13,71 @@ Using a simplified, one line of business example, this notebook will:
 - Simulate ground up losses using the collective risk model with frequency contagion parameter
 
 ```{r setup}
+library(knitr)
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(actuar)
+```
 
+# Input
+
+Limit profile for a single line of business with \$10m of premium and a 65% gross loss ratio. We also assume that each policy limit band has a lognormal underlying ground up severity distribution with $mu = 10$ and $sigma = 2$.
+
+```{r limits}
+limit_profile <- tribble(
+  ~id, ~limit, ~attach, ~premium, ~gross_loss_ratio, ~lognormal_mu, ~lognormal_sigma,
+    1, 500000,       0,      3e6,              0.65,            10,                2,
+    2,    1e6,       0,      3e6,              0.65,            10,                2,
+    3,  2.5e6,       0,      2e6,              0.65,            10,                2,
+    4,    5e6,       0,    1.5e6,              0.65,            10,                2,
+    5,   10e6,       0,    0.5e6,              0.65,            10,                2,
+)
+kable(limit_profile)
+```
+
+# Exposure analysis for XOL reinsurance layers
+
+Given the ground up loss and limit profile assumptions, we can calculate the portion of the gross losses that exposure excess of loss reinsurance layers of \$4m xs \$1m and \$5m xs \$5m.
+
+The graph below shows that three of our policy limit bands expose the reinsurance layers, with bands 3 and 4 exposing the first layer only, and band 5 fully exposing both layers.
+
+```{r exposure-analysis-picture}
+layers <- tribble(
+  ~layer_id, ~layer_limit, ~layer_attach, ~layer_exhaust,
+          1,          4e6,           1e6,            5e6,
+          2,          5e6,           5e6,           10e6,
+)
+
+limit_profile %>% 
+  ggplot(aes(y = limit / 1000, x = id)) +
+  geom_col(fill = "light gray") +
+  geom_hline(yintercept = layers$layer_attach/1000) +
+  geom_hline(yintercept = layers$layer_exhaust/1000) +
+  geom_text(aes(x = c(1,1), y = layers$layer_attach/1000+250, 
+                label = paste0("XOL attach: ", scales::comma(layers$layer_attach/1000))), data = layers) +
+  geom_text(aes(x = c(1), y = layers$layer_exhaust/1000-250, 
+                label = paste0("XOL exhaust: ", scales::comma(layers$layer_exhaust/1000))), data = layers) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  ylab("Policy limit ($000s)") + xlab("Policy limit band id")
+```
+
+To calculate the portion of loss that falls in the reinsurance layers, we use the limited expected value (LEV) function. 
+
+$pctlossinlayer = (LEV[min(policy limit + policy attach, reinsurance exhaust)] - LEV[reinsurance attach]) / (LEV[policy limit + policy attach] - LEV[policy attach])$
+
+```{r calc-exposure}
+limit_profile_exposure <- limit_profile %>% 
+  mutate(limit_plus_attach = limit + attach) %>% 
+  crossing(layers) %>% 
+  mutate(lev_top = levlnorm(pmin(limit_plus_attach, layer_exhaust), lognormal_mu, lognormal_sigma) - 
+                   levlnorm(pmin(limit_plus_attach, layer_attach), lognormal_mu, lognormal_sigma),
+         lev_bottom = levlnorm(limit_plus_attach, lognormal_mu, lognormal_sigma) - 
+                      levlnorm(attach, lognormal_mu, lognormal_sigma),
+         pct_in_layer = lev_top / lev_bottom,
+         loss_in_layer = pct_in_layer * premium * gross_loss_ratio)
+
+limit_profile_exposure
 ```
 
