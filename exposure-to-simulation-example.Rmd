@@ -9,30 +9,38 @@ Using a simplified, one line of business example, this notebook will:
 
 - Perform an exposure analysis to estimate expected losses to excess of loss reinsurance layers
 - Squish parametric ground up loss distributions by policy limit into a single piecewise linear distribution
-- MAYBE: adjust piecewise linear distribution for custom view of large losses
-- Simulate ground up losses using the collective risk model with frequency contagion parameter
+- **TODO**: adjust piecewise linear distribution for custom view of large losses
+- Simulate attritional and large losses using the collective risk model with frequency contagion parameter
 
 ```{r setup}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+```{r packages}
 library(knitr)
 library(tibble)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(actuar)
+library(purrr)
 ```
 
 # Input
 
-Limit profile for a single line of business with \$10m of premium and a 65% gross loss ratio. We also assume that each policy limit band has a lognormal underlying ground up severity distribution with $mu = 10$ and $sigma = 2$.
+Limit profile for a single line of business with \$100m of premium and a 65% gross loss ratio. We also assume that each policy limit band has a lognormal underlying ground up severity distribution with $mu = 10$ and $sigma = 2$.
 
 ```{r limits}
 limit_profile <- tribble(
   ~id, ~limit, ~attach, ~premium, ~gross_loss_ratio, ~lognormal_mu, ~lognormal_sigma,
-    1, 500000,       0,      3e6,              0.65,            10,                2,
-    2,    1e6,       0,      3e6,              0.65,            10,                2,
-    3,  2.5e6,       0,      2e6,              0.65,            10,                2,
-    4,    5e6,       0,    1.5e6,              0.65,            10,                2,
-    5,   10e6,       0,    0.5e6,              0.65,            10,                2,
+    1, 500000,       0,      3e7,              0.65,            10,                2,
+    2,    1e6,       0,    2.5e7,              0.65,            10,                2,
+    3,  2.5e6,       0,      2e7,              0.65,            10,                2,
+    4,    5e6,       0,    1.5e7,              0.65,            10,                2,
+    5,   10e6,       0,    1.0e7,              0.65,            10,                2,
 )
 kable(limit_profile)
 ```
@@ -67,9 +75,18 @@ To calculate the portion of loss that falls in the reinsurance layers, we use th
 
 $pctlossinlayer = (LEV[min(policy limit + policy attach, reinsurance exhaust)] - LEV[reinsurance attach]) / (LEV[policy limit + policy attach] - LEV[policy attach])$
 
-```{r calc-exposure}
+Expected frequency drops out of the equation as it is in both the numerator and denominator, so we can just work with the limited severities.
+
+```{r calc-exposure, echo=TRUE}
+# add gross loss, average severity, mean frequency by limit band
+limit_profile <- limit_profile %>% 
+  mutate(limit_plus_attach = limit + attach) %>%
+  mutate(gross_loss = premium * gross_loss_ratio, 
+         avg_sev = levlnorm(limit, lognormal_mu, lognormal_sigma),
+         mean_freq = gross_loss / avg_sev)
+
+# calculate percent of loss in layer
 limit_profile_exposure <- limit_profile %>% 
-  mutate(limit_plus_attach = limit + attach) %>% 
   crossing(layers) %>% 
   mutate(lev_top = levlnorm(pmin(limit_plus_attach, layer_exhaust), lognormal_mu, lognormal_sigma) - 
                    levlnorm(pmin(limit_plus_attach, layer_attach), lognormal_mu, lognormal_sigma),
@@ -78,6 +95,214 @@ limit_profile_exposure <- limit_profile %>%
          pct_in_layer = lev_top / lev_bottom,
          loss_in_layer = pct_in_layer * premium * gross_loss_ratio)
 
-limit_profile_exposure
+# summarize exposure results
+exposure_summary <- limit_profile_exposure %>% 
+  select(id, limit, attach, premium, gross_loss_ratio, layer_id, pct_in_layer) %>% 
+  spread(layer_id, pct_in_layer) %>% 
+  rename("layer_1_pct_in_layer" = `1`, "layer_2_pct_in_layer" = `2`)
+  
+exposure_summary <- exposure_summary %>% 
+  left_join(limit_profile_exposure %>% 
+    select(id, layer_id, loss_in_layer) %>% 
+    spread(layer_id, loss_in_layer) %>% 
+    rename("layer_1_layer_loss" = `1`, "layer_2_layer_loss" = `2`), 
+  by = "id")
+  
+exposure_total <- exposure_summary %>% summarise_all(sum)
+exposure_total[1, c(1,2,3,5,6,7)] <- NA
+exposure_total[1, 5] <- 0.65
+exposure_total[1, 6:7] <- exposure_total[1, 8:9] / (exposure_total$premium[1] * exposure_total$gross_loss_ratio[1])
+
+exposure_summary <- exposure_summary %>% 
+  bind_rows(exposure_total)
+
+exposure_summary
 ```
+
+The total expected loss into the first layer is `r scales::dollar(exposure_total$layer_1_layer_loss[1])` and for layer 2 `r scales::dollar(exposure_total$layer_2_layer_loss[1])`.
+
+The calculations get slightly more complicated when you add non-zero attachment points and when you have stacking of policies limits (e.g. umbrella, shared and layered business). 
+
+# Squish distributions into a single distribution
+
+Next we convert our 5 lognormal distributions into a single piecewise linear distribution. This is done in part for convenience and speed (working with a single distribution), but it also allows us to refelct the point masses at each limit profile band and will make it easier to adjust our curves based on the experience analysis. 
+
+```{r create-pl}
+# calculate point masses at each policy limit
+point_masses <- limit_profile %>% 
+  mutate(pt_mass = (1 - plnorm(limit, lognormal_mu, lognormal_sigma)) * mean_freq) %>% 
+  select(id, limit, mean_freq, pt_mass)
+
+# function to create list of claim amounts for PL
+create_claim_sizes <- function(max_claim_size, init_step_size = 100, max_steps = 100){
+  
+  step_size <- init_step_size
+  claim_size_list <- vector(mode = "numeric")
+  claim_size <- 0
+  len_list <- 1
+  
+  while (claim_size < max_claim_size){
+    for(i in 1:max_steps){ 
+      claim_size <- (i-1) * step_size
+      if(claim_size <= max_claim_size){
+        claim_size_list[len_list] <- claim_size
+        len_list <- len_list + 1
+      }
+    }
+    step_size <- 10 * step_size
+  }
+    
+  claim_size_list  
+}
+
+# run function and explicitly add values at policy limits
+claim_sizes <- create_claim_sizes(10e6)
+
+# being lazy and just adding 0.001 to policy limit, ideally would be exact same dollar amount
+claim_sizes <- sort(unique(c(claim_sizes, point_masses$limit+0.001)))
+
+# calculate 1 - CDF(claim_sizes) excluding point masses for each policy limit band and then sum
+# weighting by frequencies
+pl_dist <- limit_profile %>% 
+  mutate(claim_vals = list(claim_sizes)) %>% 
+  unnest(claim_vals) %>% 
+  mutate(surv_prob = if_else(claim_vals < limit, 
+                             ((1 - plnorm(claim_vals, lognormal_mu, lognormal_sigma)) / (1 - 0)) * mean_freq,
+                             0)) %>% 
+  group_by(claim_vals) %>% 
+  summarise(prob = sum(surv_prob))
+
+# convert from frequencies to probabilities
+total_freq <- sum(limit_profile$mean_freq)
+pl_dist$prob <- 1 - pl_dist$prob / total_freq
+
+# now add point masses
+pl_dist <- pl_dist %>% 
+  left_join(point_masses %>% select(limit, pt_mass), by = c("claim_vals" = "limit")) %>% 
+  mutate(prob = if_else(!is.na(pt_mass), pmax(lag(prob), prob - pt_mass / total_freq / 2), prob),
+         prob = if_else(!is.na(lag(pt_mass)), pmin(1, lag(prob) + lag(pt_mass) / total_freq / 2), prob)) %>% 
+  select(-pt_mass)
+
+pl_dist %>% 
+  ggplot(aes(y = prob, x = claim_vals)) +
+  geom_line() + 
+  xlim(0, 10e6)
+
+```
+
+Now we have a single piecewise linear distribution that reflects our ground up severity distributions and policy limit profiles. 
+
+# Adjust PL distribution to match targets
+
+**TO DO**: add logic for adjusting the PL distribution to match target expected loss by layer
+
+# Simulate losses using collective risk model with frequency contagion parameter
+
+See papers folder for references on this methodology. We'll use the Homer and Rosengarten methodology for this example. 
+
+We'll split the losses into attritional and large using a loss threshold of \$500k. 
+
+We'll assume our mixing variable is gamma distribution with a mean of 1 and CV of 30% and that the attritional losses are lognormally distributed.
+
+```{r simulate}
+attr_thres <- 500000
+n_trials <- 10000
+mix_cv <- 0.3
+
+set.seed(22)
+
+# simulate frequency mixing variable
+mixing_var <- rgamma(n_trials, shape = 1 / (mix_cv)^2, scale = mix_cv^2)
+
+# simulate total number of claims given overall mean and simulated mixing variable
+num_claims_total <- rpois(n_trials, total_freq * mixing_var)
+
+# lookup the probability of a claim > 500k (hack - not interpolating and hardcoding that
+#  we want second instance of policy limit claim value
+prob_large_claim <- 1 - pl_dist[which(pl_dist$claim_vals==(attr_thres+0.001))+1,2]$prob
+
+num_claims_large <- rbinom(n_trials, num_claims_total, prob_large_claim)
+num_claims_small <- num_claims_total - num_claims_large
+
+# calculate conditional large claim severity distribution
+pl_dist_large <- pl_dist %>% 
+  filter(claim_vals >= (attr_thres+0.001)) %>% 
+  mutate(prob = pmax(0, (prob - (1 - prob_large_claim)) / prob_large_claim)) %>% 
+  mutate(incr = prob - lag(prob, default = 0))
+
+# simulate large claims
+# this doesn't interpolate between claim sizes, so that introduces some sampling error
+large_losses <- tibble(num_claims = num_claims_large, trial = 1:n_trials) %>% 
+  mutate(loss = map(num_claims, ~ sample(pl_dist_large$claim_vals, .x, 
+                                         replace = TRUE, prob = pl_dist_large$incr))) %>% 
+  unnest()
+
+# hardcode attritional severity mean and cv for now b/c I'm too lazy to write code to do it
+attr_sev_mean <- 67946
+attr_sev_cv <- 1.6451
+attr_mean <- attr_sev_mean * num_claims_small
+attr_cv <- sqrt((1 + attr_sev_cv^2) / num_claims_small)
+attr_sigma <- sqrt(log(1 + attr_cv ^ 2))
+attr_mu <- log(attr_mean) - attr_sigma^2/2
+
+# simulate attritional losses
+attr_losses <- rlnorm(n_trials, attr_mu, attr_sigma)
+```
+
+We can layer the simulated large losses and compare the layer stats to what we calculated in the exposure analysis section.
+
+```{r check-layer-stats}
+large_losses_wlayers <- large_losses %>% 
+  mutate(layer_1 = pmin(layers$layer_limit[1], pmax(loss - layers$layer_attach[1], 0))) %>% 
+  mutate(layer_2 = pmin(layers$layer_limit[2], pmax(loss - layers$layer_attach[2], 0)))
+
+large_loss_by_trial <- large_losses_wlayers %>% 
+  group_by(trial, num_claims) %>% 
+  summarise_all(sum) %>% 
+  ungroup(trial) %>% 
+  right_join(tibble(trial = 1:n_trials), by = "trial") %>% 
+  mutate_all(replace_na, 0)
+
+large_loss_summary <- large_loss_by_trial %>% 
+  gather(variable, value, -trial) %>% 
+  select(-trial) %>% 
+  group_by(variable) %>% 
+  summarise(mean = mean(value),
+            cv = sd(value) / mean(value)) %>% 
+  mutate(exposure = c(exposure_total$layer_1_layer_loss, 
+                      exposure_total$layer_2_layer_loss,NA,NA)) %>% 
+  mutate(error = mean / exposure - 1)
+large_loss_summary
+```
+
+The `error` is less than 5% for both layers. This can be improvement by smarter simulation methods.
+
+Summary of attritional, large, total aggregate losses:
+
+```{r aggregate-losses}
+total_losses <- large_loss_by_trial %>% 
+  mutate(loss_attr = attr_losses,
+         loss_total = loss + loss_attr)
+  
+loss_summary <- total_losses %>% 
+  select(trial, loss, loss_attr, loss_total) %>% 
+  gather(variable, value, -trial) %>% 
+  select(-trial) %>% 
+  group_by(variable) %>% 
+  summarise(mean = mean(value),
+            cv = sd(value) / mean(value))
+loss_summary
+```
+
+```{r aggregate-losses-graph}
+total_losses %>% 
+  select(trial, loss, loss_attr, loss_total) %>% 
+  gather(variable, value, -trial) %>% 
+  ggplot(aes(x = value/1e6)) +
+  geom_histogram() +
+  facet_wrap(~ variable) +
+  scale_x_continuous(labels = scales::comma_format())
+```
+
+
 
