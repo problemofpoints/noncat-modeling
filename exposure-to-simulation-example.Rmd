@@ -206,7 +206,7 @@ We'll assume our mixing variable is gamma distribution with a mean of 1 and CV o
 
 ```{r simulate}
 attr_thres <- 500000
-n_trials <- 10000
+n_trials <- 20000
 mix_cv <- 0.3
 
 set.seed(22)
@@ -235,7 +235,10 @@ pl_dist_large <- pl_dist %>%
 large_losses <- tibble(num_claims = num_claims_large, trial = 1:n_trials) %>% 
   mutate(loss = map(num_claims, ~ sample(pl_dist_large$claim_vals, .x, 
                                          replace = TRUE, prob = pl_dist_large$incr))) %>% 
-  unnest()
+  unnest() %>% 
+  group_by(trial) %>% 
+  mutate(sequence = 1:n()) %>% 
+  ungroup()
 
 # hardcode attritional severity mean and cv for now b/c I'm too lazy to write code to do it
 attr_sev_mean <- 67946
@@ -260,6 +263,7 @@ large_loss_by_trial <- large_losses_wlayers %>%
   group_by(trial, num_claims) %>% 
   summarise_all(sum) %>% 
   ungroup(trial) %>% 
+  select(-sequence) %>% 
   right_join(tibble(trial = 1:n_trials), by = "trial") %>% 
   mutate_all(replace_na, 0)
 
@@ -304,5 +308,21 @@ total_losses %>%
   scale_x_continuous(labels = scales::comma_format())
 ```
 
+```{r export-sims}
+export_large_losses <- large_losses %>% 
+  mutate(sequence = sequence + 1,
+         event_id = trial * 1e6 + sequence) %>% 
+  select('trialid' = trial, event_id, loss)
+
+export_attr_losses <- total_losses %>% 
+  mutate(sequence = 1,
+         event_id = trial * 1e6 + sequence) %>% 
+  select('trialid' = trial, event_id, 'loss' = loss_attr)
+
+readr::write_csv(export_large_losses %>% select(-trialid), "one_lob_example_large.csv")
+readr::write_csv(export_attr_losses %>% select(-trialid), "one_lob_example_attritional.csv")
+
+
+```
 
 
