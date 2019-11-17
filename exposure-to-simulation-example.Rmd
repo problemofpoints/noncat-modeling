@@ -206,7 +206,7 @@ We'll assume our mixing variable is gamma distribution with a mean of 1 and CV o
 
 ```{r simulate}
 attr_thres <- 500000
-n_trials <- 20000
+n_trials <- 10000
 mix_cv <- 0.3
 
 set.seed(22)
@@ -309,19 +309,33 @@ total_losses %>%
 ```
 
 ```{r export-sims}
-export_large_losses <- large_losses %>% 
-  mutate(sequence = sequence + 1,
-         event_id = trial * 1e6 + sequence) %>% 
-  select('trialid' = trial, event_id, loss)
 
-export_attr_losses <- total_losses %>% 
-  mutate(sequence = 1,
-         event_id = trial * 1e6 + sequence) %>% 
-  select('trialid' = trial, event_id, 'loss' = loss_attr)
+create_lob_losses <- function(large_loss, total_loss, lob_num, scale_cv){
+  
+  export_large_losses <- large_loss %>% 
+    mutate(eventid = lob_num * 10 + 1) %>% 
+    select('trialid' = trial, eventid, sequence, loss)
+  
+  export_attr_losses <- total_loss %>% 
+    mutate(sequence = 182.5,
+           eventid = lob_num * 10 + 0) %>% 
+    select('trialid' = trial, eventid, sequence, 'loss' = loss_attr)
 
-readr::write_csv(export_large_losses %>% select(-trialid), "one_lob_example_large.csv")
-readr::write_csv(export_attr_losses %>% select(-trialid), "one_lob_example_attritional.csv")
+  ans <- bind_rows(export_large_losses, export_attr_losses)
+  n_rows <- nrow(ans)
+  scale_sigma <- sqrt(log(1 + scale_cv^2))
+  scale_mu <- log(1) - scale_sigma^2/2
+  
+  ans %>% 
+    mutate(loss = loss * rlnorm(n_rows, scale_mu, scale_sigma))
+  
+}
 
+export_losses <- map2_dfr(1:3,c(0.001, 0.3, 0.6), ~ create_lob_losses(large_losses, total_losses, .x, .y)) %>% 
+  arrange(trialid, sequence, eventid) %>% 
+  rename("day" = sequence)
+
+readr::write_csv(export_losses, "three_lob_example.csv")
 
 ```
 

@@ -1,0 +1,319 @@
+---
+title: "Creating noncat reinsurance structures"
+output: 
+  rmarkdown::html_document:
+    code_folding: hide
+---
+
+```{r, include = FALSE}
+# knitr::opts_chunk$set(
+#   collapse = TRUE,
+#   comment = "#>"
+# )
+```
+
+# Introduction
+
+This vignette walks through the process of creating a sequence of non-cat reinsurance structures. The following structures will be modeled:
+
+1. **Basic**: an excess structure with three vanilla excess of loss layers.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE
+)
+library(analyzere)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+locktonr::gg_set_lockton_theme()
+```
+
+
+```{r setup-are}
+are_set_credentials()
+
+# retrieve Sample AIR Analysis Profile
+analysis_profile <- are_AnalysisProfile() %>% are_retrieve("5bb4ae58-5297-47c8-ad03-874d199c3f8a")
+```
+
+
+```{r setup}
+meta_data_list <- list(client = "XYZ Ins Co",
+                       program_name = "Casualty XOL",
+                       program_type = "Casualty",
+                       year = 2020)
+```
+
+# Gross losses
+
+We will use one loss set that contains losses for three lines of business. In the code below we retrieve the loss set and then create an unlimited "gross" quota share for each line of business. Each line includes attritional and large losses. 
+
+```{r gross-losses}
+# # retrieve gross YELTLossSet and then create a "gross" unlimited quota share and gross layerview for each line
+# gross_layer <- tibble(lob = 1:3,
+#                       losset_id = c("2d408839-8782-4f67-ad9e-f246f502f8ae",
+#                                     "f7b4c72e-74ec-48c8-a89f-5091ada5ff52",
+#                                     "f5751c4e-deb5-4c64-9e4a-597c0761ec7a"),
+#                       premium = c(100e6, 100e6, 100e6),
+#                       expenses = c(0.3, 0.3, 0.3)) %>%
+#   mutate(layer = pmap(list(lob, losset_id, premium, expenses), 
+#                       ~ are_LossSet() %>% are_retrieve(..2) %>% 
+#                         are_Layer_QuotaShare(premium = ..3, 
+#                                              fees = are_Fee(type = "ProportionalExpense", amount_or_rate = ..4),
+#                                              description = paste0("Gross layer loss set - lob", ..1),
+#                                              meta_data = c(meta_data_list, perspective = "gross")) %>% 
+#                         are_save())) %>% 
+#   mutate(layerview = map(layer, ~ are_LayerView(layer = .x, analysis_profile = analysis_profile) %>% are_save())) %>% 
+#   mutate(layer_id = map_chr(layer, ~ .x$id),
+#          layerview_id = map_chr(layerview, ~ .x$id))
+
+
+# retrieve gross quota share layer and layerview
+gross_layer <- tibble(lob = 1:3,
+                      losset_id = c("2d408839-8782-4f67-ad9e-f246f502f8ae",
+                                    "f7b4c72e-74ec-48c8-a89f-5091ada5ff52",
+                                    "f5751c4e-deb5-4c64-9e4a-597c0761ec7a"),
+                      premium = c(100e6, 100e6, 100e6),
+                      expenses = c(0.3, 0.3, 0.3),
+                      layer_id = c("7693b18e-f590-4767-9c90-2d09c9486c0e",
+                                   "1e7a17c1-69c6-45ee-babf-8467dc4d3df9",
+                                   "42b3400c-f86b-4173-a1cd-04bb465ccc53"),
+                      layerview_id = c("ecd27cce-405d-e1a0-6f52-9521f22a5e19",
+                                       "b5bf20ac-39ba-12b2-2203-5affc6363326",
+                                       "98ee0a9c-391d-d3b3-f991-ab3b2687bb20")) %>%
+  mutate(layer = map(layer_id, ~ are_Layer() %>% are_retrieve(.x))) %>% 
+  mutate(layerview = map(layerview_id, ~ are_LayerView(are_Layer(), analysis_profile) %>% are_retrieve(.x))) 
+```
+
+Now we have a tibble that contains the three gross layer loss sets. 
+
+```{r gross-metrics, message=FALSE, warning=FALSE}
+exceed_prob <- c(0.001,0.002,0.004,0.005,0.01,0.02,0.04,0.05,0.1)
+gross_metrics <- gross_layer %>% 
+  mutate(tail_metrics = map(layerview, ~
+  are_tail_metrics(layer_portfolio_view = .x,
+                   probabilities = exceed_prob,
+                   perspective = "LossGross", 
+                   aggregation_method = "AEP") %>% 
+  select(probability, "aep_var" = min, "aep_tvar" = mean))) %>%
+  select(lob, tail_metrics) %>% 
+  unnest(tail_metrics)
+
+knitr::kable(gross_metrics, format.args = list(big.mark = ','))
+```
+
+# 1. Basic
+
+The basic reinsurance structure has three excess of loss layers, each with unlimited reinstatements, and the subject losses defined as the gross layer loss sets. We set the participation to -1 because we are ceding losses to reinsurers and Analyze Re treats a positive participation as a positive loss (i.e. not a ceded loss).
+
+```{r basic-structure}
+basic_structure <- 
+  tribble(~ description,  ~ limit, ~ attach, ~ participation, ~ premium, ~ loss_filter, ~ gross_layer,
+              "Layer 1",    2.5e6,    2.5e6,              -1,     7.5e6,   "large",       gross_layer$layer,
+              "Layer 2",      5e6,      5e6,              -1,     2.5e6,   "large",       gross_layer$layer,
+              "Layer 3",     15e6,     10e6,              -1,       1e6,   "large",       gross_layer$layer)
+basic_structure %>% knitr::kable()
+```
+
+Below is a graph of the structure.
+
+```{r basic-tower, fig.asp=1.7, fig.width=3}
+gg_basic_structure <- basic_structure %>% 
+  ggplot(aes(xmin = 0, xmax = 1, ymin = attach/1e6, ymax = (limit+attach)/1e6)) +
+  geom_rect(fill = "#002F6C", colour = "white") +
+  geom_rect(aes(xmin = 0, xmax = 1, ymin = 0, ymax = 2.5), fill = "gray", colour = "white") +
+  geom_text(aes(x = 0.5, y = (attach + limit/2)/1e6, 
+                label = paste0(description, "\n", scales::dollar(limit/1e6), "m xs ", scales::dollar(attach/1e6), "m")), 
+            colour = "white", size = 3) +
+  geom_text(aes(x = 0.5, y = 2.5/3, label = "Retention"), colour = "white", size = 3) +
+  scale_y_continuous(labels = scales::dollar_format(),
+                     breaks = c(0,2.5,5.0,10.0,25.0),
+                     expand = c(0,0)) +
+  theme(axis.line.y = element_blank()) +
+  ylab(NULL) + xlab(NULL) + scale_x_continuous(labels = NULL)
+gg_basic_structure
+```
+
+Now we can create the Analyze Re layers: 
+
+- Create and save Analyze Re `AggXL` layers using the functions `are_Layer_AggXL` and `are_save`
+- Pass those layers into a Nested Layer (`are_Layer_Nested`) along with the gross_layer and save. This is the layer from which we will extract loss information. We also need to apply the "large" loss filter so that we only apply the layer to large losses.
+- Create LayerViews (`are_LayerView`) for each nested layer.
+- Extract the UUID's for the Layers and LayerViews
+
+```{r create-basic}
+# # create an Analyze Re CatXL layer and then send that to a Nested Layer where the Gross losses are applied (column "layer")
+# # then create a LayerView for each layer (column "layer_view")
+# # then extract the Layer id and LayerView id for each layer
+# 
+# basic_structure <- basic_structure %>%
+#   mutate(layer = purrr::pmap(., ~ are_Layer_AggXL(loss_sets = list(),
+#                                                   premium = ..5,
+#                                                   participation = ..4,
+#                                                   limit = ..2,
+#                                                   attachment = ..3,
+#                                                   meta_data = c(meta_data_list, percpective = "ceded")) %>%
+#                                   are_save() %>%
+#                                   are_Layer_Nested(sources = ..7,
+#                                                    description = ..1,
+#                                                    meta_data = c(lossfilter_id = "ef4af727-d13c-4898-8900-ddd348cae299",
+#                                                                  meta_data_list,
+#                                                                  percpective = "ceded")) %>%
+#                                   are_save())) %>%
+#   mutate(layer_view = purrr::map(layer, ~ are_Layer_Nested(sink = are_Layer_Filter(filters = are_LossFilter() %>%
+#                                                                                    are_retrieve(.x$meta_data$lossfilter_id)),
+#                                                            sources = .x) %>%
+#                                    are_LayerView(analysis_profile = analysis_profile) %>%
+#                                    are_save())) %>%
+#   mutate(layer_id = purrr::map_chr(layer, "id"), layer_view_id = purrr::map_chr(layer_view, "id"))
+# basic_structure
+```
+```{r retrieve-basic}
+# layers have already been saved so just retrieve them now
+basic_structure <- basic_structure %>% 
+  mutate(layer_id = c("35df0e5b-4b66-4b7c-aa31-42b02b9df41f",
+                      "112d5caf-7982-41aa-9ccc-7142d2db3464",
+                      "c8db2efd-75d4-43fe-914b-9b02d651efa4")) %>% 
+  mutate(layer_view_id = c("e5c6cba4-f702-a69c-12d5-89877daa695e",
+                           "32624e46-4671-7af4-df7f-694b06ff9e35",
+                           "0d7c4fbd-2023-c935-dc63-0387ea559b56")) %>% 
+  mutate(layer = purrr::map(layer_id, ~ are_Layer() %>% are_retrieve(.x)),
+         layer_view = purrr::map(layer_view_id, ~ are_Layer() %>% 
+                                                  are_LayerView(analysis_profile = analysis_profile) %>% 
+                                                  are_retrieve(.x)))
+basic_structure %>% 
+  select(description, limit, attach, layer_id, layer_view_id) %>% knitr::kable()
+```
+
+Given the LayerViews for each layer, we can calculate various layer metrics, such as expected layer loss, standard deviation of loss, and attach and exhaust probabilities.
+
+```{r basic-layer-stats}
+basic_structure <- basic_structure %>% 
+  mutate(layer_metrics = purrr::map(layer_view, ~ .x %>% are_tail_metrics(probabilities = 1))) %>% 
+  mutate(layer_el = purrr::map_dbl(layer_metrics, "mean"), 
+         layer_sd = purrr::map_dbl(layer_metrics, ~ sqrt(.x$variance)),
+         layer_attach_prob = purrr::map_dbl(layer_view, ~ .x %>% are_ep(thresholds = 0) %>% pull(probability)),
+         layer_exhaust_prob = purrr::map2_dbl(layer_view, limit, ~ .x %>% 
+                                              are_ep(thresholds = .y, inclusive = TRUE) %>% pull(probability))) %>% 
+  mutate(layer_margin = premium + layer_el,
+         layer_msd = (premium + layer_el) / layer_sd,
+         layer_multiple = -premium / layer_el,
+         rol = premium / limit,
+         lol = layer_el / limit)
+```
+```{r basic-layer-stats-show}
+basic_structure %>% 
+  select(description, limit, attach, participation, premium, rol,
+         layer_el, lol, layer_margin, layer_msd, layer_multiple, 
+         layer_attach_prob, layer_exhaust_prob) %>% 
+  knitr::kable()
+```
+
+Finally we can create gross, ceded, and net portfolios for this structure.
+
+```{r basic-portfolios-create}
+# # actually create and save the portfolios
+# structure_portfolios <- tibble(structure_name = "Basic") %>%
+#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Basic non-cat Gross", 
+#                                          description = "Basic non-cat Gross", 
+#                                          meta_data = c(meta_data_list, perspective = "gross")) %>% 
+#                              are_save()),
+#          ceded_port = list(are_Portfolio(basic_structure$layer, 
+#                                          name = "Basic non-cat ceded", 
+#                                          description = "Basic non-cat ceded",
+#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>% 
+#                              are_save()),
+#          net_port = list(are_Portfolio(c(gross_layer$layer, basic_structure$layer),
+#                                   name = "Basic non-cat net", description = "Basic non-cat net",
+#                                   meta_data = c(meta_data_list, perspective = "net")) %>% 
+#                            are_save())) %>%
+#   mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
+#          ceded_view = list(are_PortfolioView(layer_views = basic_structure$layer_view,
+#                                         analysis_profile = analysis_profile) %>% are_save()),
+#          net_view = list(are_PortfolioView(layer_views = c(gross_layer$layerview, basic_structure$layer_view),
+#                         analysis_profile = analysis_profile) %>% are_save())) %>%
+#   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+# structure_portfolios %>%
+#   select(-c(1:7))
+```
+```{r basic-portfolios-retrieve}
+# retrieve already created portfolios
+structure_portfolios <- tibble(structure_name = "Basic") %>% 
+  mutate(gross_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("3aba4ae5-72c7-4b53-a00a-cfa5f5563be8")),
+         ceded_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("3aba4ae5-72c7-4b53-a00a-cfa5f5563be8")),
+         net_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("840e5d2d-a281-4754-a33e-cca3f93451bd"))) %>% 
+  mutate(gross_view = list(are_PortfolioView(gross_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("404a0eb1-9a2d-4603-fedd-d07798621fbc")),
+         ceded_view = list(are_PortfolioView(ceded_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("e0f671c6-d155-396b-5f46-2a65da2116d4")),
+         net_view = list(are_PortfolioView(net_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("9241b508-928e-b925-0ee0-2df23f9594e8"))) %>% 
+  mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+
+structure_portfolios <- structure_portfolios %>% 
+  mutate_at(-1, as.list) %>% 
+  pivot_longer(cols = -structure_name, names_to = c("gcn","field","id"), names_sep = "_", values_to = "value") %>% 
+  mutate(id = if_else(is.na(id),"",id)) %>% 
+  pivot_wider(names_from = c(field, id), values_from = value) %>% 
+  mutate_at(5:6, as.character)
+
+structure_portfolios %>% 
+  select(structure_name, port_id, view_id) %>% knitr::kable()
+```
+
+We can calculate metrics from these portfolios to quantify the impact of this reinsurance structure on gross losses. The table below shows the occurrence exceedance probability curve (aka VaR, aka PML) on a gross, net, and ceded as the difference between the gross and net.
+
+```{r basic-port-metrics}
+structure_portfolios <- structure_portfolios %>% 
+  mutate(tail_metrics = map2(view_, gcn, ~ .x %>% 
+                               are_tail_metrics(probabilities = if(.y=="ceded"){1-exceed_prob}else{exceed_prob}, 
+                                                aggregation_method = if(.y=="ceded"){"AEP"}else{"AEP"})))
+structure_portfolios %>% 
+  select(structure_name, gcn, tail_metrics) %>% 
+  unnest(tail_metrics) %>% 
+  filter(gcn != "ceded") %>% 
+  select(structure_name, gcn, probability, occ_var = min) %>% 
+  pivot_wider(names_from = gcn, values_from = c(occ_var)) %>% 
+  mutate(ceded = net - gross) %>% 
+  knitr::kable(format.args = list(big.mark = ','))
+```
+
+
+
+
+
+
+
+
+
+```{r write-to-pptx, include=FALSE}
+library(officer)
+library(rvg)
+
+pptx <- read_pptx("c:/temp/Lockton_template.pptx") %>% 
+  add_slide(layout = "Title and Content", master = "Segoe Yellow Angle") %>% 
+  ph_with(dml(ggobj = gg_basic_structure), location = ph_location(type = "body", height = 5.1, width = 3)) %>% 
+  print(target = "structure-graphs-non-cat.pptx")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
