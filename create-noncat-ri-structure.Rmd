@@ -218,18 +218,18 @@ Finally we can create gross, ceded, and net portfolios for this structure.
 ```{r basic-portfolios-create}
 # # actually create and save the portfolios
 # structure_portfolios <- tibble(structure_name = "Basic") %>%
-#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Basic non-cat Gross", 
-#                                          description = "Basic non-cat Gross", 
-#                                          meta_data = c(meta_data_list, perspective = "gross")) %>% 
+#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Basic non-cat Gross",
+#                                          description = "Basic non-cat Gross",
+#                                          meta_data = c(meta_data_list, perspective = "gross")) %>%
 #                              are_save()),
-#          ceded_port = list(are_Portfolio(basic_structure$layer, 
-#                                          name = "Basic non-cat ceded", 
+#          ceded_port = list(are_Portfolio(basic_structure$layer,
+#                                          name = "Basic non-cat ceded",
 #                                          description = "Basic non-cat ceded",
-#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>% 
+#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>%
 #                              are_save()),
 #          net_port = list(are_Portfolio(c(gross_layer$layer, basic_structure$layer),
 #                                   name = "Basic non-cat net", description = "Basic non-cat net",
-#                                   meta_data = c(meta_data_list, perspective = "net")) %>% 
+#                                   meta_data = c(meta_data_list, perspective = "net")) %>%
 #                            are_save())) %>%
 #   mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
 #          ceded_view = list(are_PortfolioView(layer_views = basic_structure$layer_view,
@@ -254,25 +254,25 @@ structure_portfolios <- tibble(structure_name = "Basic") %>%
            are_retrieve("9241b508-928e-b925-0ee0-2df23f9594e8"))) %>% 
   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
 
-structure_portfolios <- structure_portfolios %>% 
+structure_portfolios2 <- structure_portfolios %>% 
   mutate_at(-1, as.list) %>% 
   pivot_longer(cols = -structure_name, names_to = c("gcn","field","id"), names_sep = "_", values_to = "value") %>% 
   mutate(id = if_else(is.na(id),"",id)) %>% 
   pivot_wider(names_from = c(field, id), values_from = value) %>% 
   mutate_at(5:6, as.character)
 
-structure_portfolios %>% 
+structure_portfolios2 %>% 
   select(structure_name, port_id, view_id) %>% knitr::kable()
 ```
 
 We can calculate metrics from these portfolios to quantify the impact of this reinsurance structure on gross losses. The table below shows the occurrence exceedance probability curve (aka VaR, aka PML) on a gross, net, and ceded as the difference between the gross and net.
 
 ```{r basic-port-metrics}
-structure_portfolios <- structure_portfolios %>% 
+structure_portfolios2 <- structure_portfolios2 %>% 
   mutate(tail_metrics = map2(view_, gcn, ~ .x %>% 
                                are_tail_metrics(probabilities = if(.y=="ceded"){1-exceed_prob}else{exceed_prob}, 
                                                 aggregation_method = if(.y=="ceded"){"AEP"}else{"AEP"})))
-structure_portfolios %>% 
+structure_portfolios2 %>% 
   select(structure_name, gcn, tail_metrics) %>% 
   unnest(tail_metrics) %>% 
   filter(gcn != "ceded") %>% 
