@@ -41,10 +41,10 @@ analysis_profile <- are_AnalysisProfile() %>% are_retrieve("5bb4ae58-5297-47c8-a
 ```
 
 
-```{r setup}
+```{r meta-data}
 meta_data_list <- list(client = "XYZ Ins Co",
                        program_name = "Casualty XOL",
-                       program_type = "Casualty",
+                       program_type = "casualty",
                        year = 2020)
 ```
 
@@ -53,25 +53,30 @@ meta_data_list <- list(client = "XYZ Ins Co",
 We will use one loss set that contains losses for three lines of business. In the code below we retrieve the loss set and then create an unlimited "gross" quota share for each line of business. Each line includes attritional and large losses. 
 
 ```{r gross-losses}
-# # retrieve gross YELTLossSet and then create a "gross" unlimited quota share and gross layerview for each line
-# gross_layer <- tibble(lob = 1:3,
-#                       losset_id = c("2d408839-8782-4f67-ad9e-f246f502f8ae",
-#                                     "f7b4c72e-74ec-48c8-a89f-5091ada5ff52",
-#                                     "f5751c4e-deb5-4c64-9e4a-597c0761ec7a"),
-#                       premium = c(100e6, 100e6, 100e6),
-#                       expenses = c(0.3, 0.3, 0.3)) %>%
-#   mutate(layer = pmap(list(lob, losset_id, premium, expenses), 
-#                       ~ are_LossSet() %>% are_retrieve(..2) %>% 
-#                         are_Layer_QuotaShare(premium = ..3, 
-#                                              fees = are_Fee(type = "ProportionalExpense", amount_or_rate = ..4),
-#                                              description = paste0("Gross layer loss set - lob", ..1),
-#                                              meta_data = c(meta_data_list, perspective = "gross")) %>% 
-#                         are_save())) %>% 
-#   mutate(layerview = map(layer, ~ are_LayerView(layer = .x, analysis_profile = analysis_profile) %>% are_save())) %>% 
-#   mutate(layer_id = map_chr(layer, ~ .x$id),
-#          layerview_id = map_chr(layerview, ~ .x$id))
+# retrieve gross YELTLossSet and then create a "gross" unlimited quota share and gross layerview for each line
+gross_layer <- tibble(lob = 1:3,
+                      losset_id = c("2d408839-8782-4f67-ad9e-f246f502f8ae",
+                                    "f7b4c72e-74ec-48c8-a89f-5091ada5ff52",
+                                    "f5751c4e-deb5-4c64-9e4a-597c0761ec7a"),
+                      premium = c(100e6, 100e6, 100e6),
+                      expenses = c(0.3, 0.3, 0.3)) %>%
+  mutate(layer = pmap(list(lob, losset_id, premium, expenses),
+                      ~ are_LossSet() %>% are_retrieve(..2) %>%
+                        are_Layer_QuotaShare(premium = ..3,
+                                             fees = are_Fee(type = "ProportionalExpense", amount_or_rate = ..4),
+                                             description = paste0("Gross layer loss set - lob", ..1),
+                                             meta_data = c(meta_data_list, 
+                                                           perspective = "gross",
+                                                           sage_layer_type = "gross_layer_loss_set")) %>%
+                        are_save())) %>%
+  mutate(layerview = map(layer, ~ are_LayerView(layer = .x, analysis_profile = analysis_profile) %>% are_save())) %>%
+  mutate(layer_id = map_chr(layer, ~ .x$id),
+         layerview_id = map_chr(layerview, ~ .x$id))
+gross_layer$layerview_id
+```
 
 
+```{r gross-losses-retrieve}
 # retrieve gross quota share layer and layerview
 gross_layer <- tibble(lob = 1:3,
                       losset_id = c("2d408839-8782-4f67-ad9e-f246f502f8ae",
@@ -79,14 +84,14 @@ gross_layer <- tibble(lob = 1:3,
                                     "f5751c4e-deb5-4c64-9e4a-597c0761ec7a"),
                       premium = c(100e6, 100e6, 100e6),
                       expenses = c(0.3, 0.3, 0.3),
-                      layer_id = c("7693b18e-f590-4767-9c90-2d09c9486c0e",
-                                   "1e7a17c1-69c6-45ee-babf-8467dc4d3df9",
-                                   "42b3400c-f86b-4173-a1cd-04bb465ccc53"),
-                      layerview_id = c("ecd27cce-405d-e1a0-6f52-9521f22a5e19",
-                                       "b5bf20ac-39ba-12b2-2203-5affc6363326",
-                                       "98ee0a9c-391d-d3b3-f991-ab3b2687bb20")) %>%
+                      layer_id = c("815213e4-5f42-4756-8c95-f4d365fe300a",
+                                   "3a95790c-0ce0-4f4d-abe5-f03ff02d134d",
+                                   "ae20bdc9-c42e-4059-825a-a5eef4757afc"),
+                      layerview_id = c("b438fbed-7348-a709-17f1-09de03f71207",
+                                       "6edf7968-bc60-9698-1f85-38b657e9a175",
+                                       "df48119c-e66d-5908-2b07-1f8ea284ab06")) %>%
   mutate(layer = map(layer_id, ~ are_Layer() %>% are_retrieve(.x))) %>% 
-  mutate(layerview = map(layerview_id, ~ are_LayerView(are_Layer(), analysis_profile) %>% are_retrieve(.x))) 
+  mutate(layerview = map(layerview_id, ~ are_LayerView(are_Layer(), analysis_profile) %>% are_retrieve(.x)))
 ```
 
 Now we have a tibble that contains the three gross layer loss sets. 
@@ -112,10 +117,10 @@ The basic reinsurance structure has three excess of loss layers, each with unlim
 
 ```{r basic-structure}
 basic_structure <- 
-  tribble(~ description,  ~ limit, ~ attach, ~ participation, ~ premium, ~ loss_filter, ~ gross_layer,
-              "Layer 1",    2.5e6,    2.5e6,              -1,     7.5e6,   "large",       gross_layer$layer,
-              "Layer 2",      5e6,      5e6,              -1,     2.5e6,   "large",       gross_layer$layer,
-              "Layer 3",     15e6,     10e6,              -1,       1e6,   "large",       gross_layer$layer)
+  tribble(~ description,  ~ limit, ~ attach, ~ participation, ~ premium, ~ agg_limit, ~ loss_filter, ~ gross_layer,
+              "Layer 1",    2.5e6,    2.5e6,              -1,     7.5e6,        1e99,    "large",       gross_layer$layer,
+              "Layer 2",      5e6,      5e6,              -1,     2.5e6,         25e6,     "large",       gross_layer$layer,
+              "Layer 3",     15e6,     10e6,              -1,       1e6,        45e6,      "large",       gross_layer$layer)
 basic_structure %>% knitr::kable()
 ```
 
@@ -140,47 +145,72 @@ gg_basic_structure
 
 Now we can create the Analyze Re layers: 
 
-- Create and save Analyze Re `AggXL` layers using the functions `are_Layer_AggXL` and `are_save`
+- Create and save Analyze Re `Generic` layers using the functions `are_Layer_Generic` and `are_save`
 - Pass those layers into a Nested Layer (`are_Layer_Nested`) along with the gross_layer and save. This is the layer from which we will extract loss information. We also need to apply the "large" loss filter so that we only apply the layer to large losses.
 - Create LayerViews (`are_LayerView`) for each nested layer.
 - Extract the UUID's for the Layers and LayerViews
 
 ```{r create-basic}
-# # create an Analyze Re CatXL layer and then send that to a Nested Layer where the Gross losses are applied (column "layer")
-# # then create a LayerView for each layer (column "layer_view")
-# # then extract the Layer id and LayerView id for each layer
-# 
+# create an Analyze Re CatXL layer and then send that to a Nested Layer where the Gross losses are applied (column "layer")
+# then create a LayerView for each layer (column "layer_view")
+# then extract the Layer id and LayerView id for each layer
+
+get_filter_from_name <- function(loss_filter_list, filter_name){
+  
+  filter_id <- loss_filter_list[which(map_chr(loss_filter_list, "name")==filter_name)][[1]]$id
+  loss_filter <- are_LossFilter() %>% are_retrieve(filter_id)
+  are_Layer_Filter(filters = loss_filter, 
+                   description = loss_filter$description)
+  
+}
+
+get_layer_premium <- function(layer_list){
+  
+  sum(map_dbl(layer_list, ~ .x$premium$value))
+  
+}
+
 # basic_structure <- basic_structure %>%
-#   mutate(layer = purrr::pmap(., ~ are_Layer_AggXL(loss_sets = list(),
+#   mutate(layer = purrr::pmap(., ~ are_Layer_Generic(loss_sets = list(),
 #                                                   premium = ..5,
 #                                                   participation = ..4,
 #                                                   limit = ..2,
 #                                                   attachment = ..3,
-#                                                   meta_data = c(meta_data_list, percpective = "ceded")) %>%
+#                                                   aggregate_limit = ..6,
+#                                                   aggregate_attachment = 0,
+#                                                   meta_data = c(meta_data_list, 
+#                                                                 percpective = "ceded",
+#                                                                 sage_layer_type = "noncat_xl",
+#                                                                 subject_premium = get_layer_premium(..8),
+#                                                                 rate_on_subj = ..5 / get_layer_premium(..8))) %>%
 #                                   are_save() %>%
-#                                   are_Layer_Nested(sources = ..7,
+#                                   are_Layer_Nested(sources = ..8,
 #                                                    description = ..1,
-#                                                    meta_data = c(lossfilter_id = "ef4af727-d13c-4898-8900-ddd348cae299",
+#                                                    meta_data = c(lossfilter_name = "large",
 #                                                                  meta_data_list,
-#                                                                  percpective = "ceded")) %>%
+#                                                                  percpective = "ceded",
+#                                                                  sage_layer_type = "noncat_xl",
+#                                                                  subject_premium = get_layer_premium(..8),
+#                                                                  rate_on_subj = ..5 / get_layer_premium(..8))) %>%
 #                                   are_save())) %>%
-#   mutate(layer_view = purrr::map(layer, ~ are_Layer_Nested(sink = are_Layer_Filter(filters = are_LossFilter() %>%
-#                                                                                    are_retrieve(.x$meta_data$lossfilter_id)),
+#   mutate(layerview = purrr::map(layer, ~ are_Layer_Nested(sink = get_filter_from_name(analysis_profile$loss_filters, 
+#                                                                                        .x$meta_data$lossfilter_name),
 #                                                            sources = .x) %>%
 #                                    are_LayerView(analysis_profile = analysis_profile) %>%
 #                                    are_save())) %>%
-#   mutate(layer_id = purrr::map_chr(layer, "id"), layer_view_id = purrr::map_chr(layer_view, "id"))
+#   mutate(layer_id = purrr::map_chr(layer, "id"), layerview_id = purrr::map_chr(layerview, "id"))
+# basic_structure$layerview_id
 # basic_structure
 ```
 ```{r retrieve-basic}
 # layers have already been saved so just retrieve them now
 basic_structure <- basic_structure %>% 
-  mutate(layer_id = c("35df0e5b-4b66-4b7c-aa31-42b02b9df41f",
-                      "112d5caf-7982-41aa-9ccc-7142d2db3464",
-                      "c8db2efd-75d4-43fe-914b-9b02d651efa4")) %>% 
-  mutate(layer_view_id = c("e5c6cba4-f702-a69c-12d5-89877daa695e",
-                           "32624e46-4671-7af4-df7f-694b06ff9e35",
-                           "0d7c4fbd-2023-c935-dc63-0387ea559b56")) %>% 
+  mutate(layer_id = c("01a439e5-39f7-41cd-a8dc-6148320bdd59",
+                      "281d7da8-cd34-4dd5-a2ac-c33963abb2dd",
+                      "16985c4b-bb3b-4498-8f87-a4e3f36a9870")) %>% 
+  mutate(layer_view_id = c("d020afd0-4fb1-92c2-f2cc-1fbc548e4e2a",
+                           "bd26dc5e-564f-1317-f6e5-dd6b8f014123",
+                           "ec27f2e9-5330-d563-6846-6fa3463d8f02")) %>% 
   mutate(layer = purrr::map(layer_id, ~ are_Layer() %>% are_retrieve(.x)),
          layer_view = purrr::map(layer_view_id, ~ are_Layer() %>% 
                                                   are_LayerView(analysis_profile = analysis_profile) %>% 
@@ -216,42 +246,42 @@ basic_structure %>%
 Finally we can create gross, ceded, and net portfolios for this structure.
 
 ```{r basic-portfolios-create}
-# # actually create and save the portfolios
-# structure_portfolios <- tibble(structure_name = "Basic") %>%
-#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Basic non-cat Gross",
-#                                          description = "Basic non-cat Gross",
-#                                          meta_data = c(meta_data_list, perspective = "gross")) %>%
-#                              are_save()),
-#          ceded_port = list(are_Portfolio(basic_structure$layer,
-#                                          name = "Basic non-cat ceded",
-#                                          description = "Basic non-cat ceded",
-#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>%
-#                              are_save()),
-#          net_port = list(are_Portfolio(c(gross_layer$layer, basic_structure$layer),
-#                                   name = "Basic non-cat net", description = "Basic non-cat net",
-#                                   meta_data = c(meta_data_list, perspective = "net")) %>%
-#                            are_save())) %>%
-#   mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
-#          ceded_view = list(are_PortfolioView(layer_views = basic_structure$layer_view,
-#                                         analysis_profile = analysis_profile) %>% are_save()),
-#          net_view = list(are_PortfolioView(layer_views = c(gross_layer$layerview, basic_structure$layer_view),
-#                         analysis_profile = analysis_profile) %>% are_save())) %>%
-#   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
-# structure_portfolios %>%
-#   select(-c(1:7))
+# actually create and save the portfolios
+structure_portfolios <- tibble(structure_name = "Basic") %>%
+  mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Basic non-cat Gross",
+                                         description = "Basic non-cat Gross",
+                                         meta_data = c(meta_data_list, perspective = "gross")) %>%
+                             are_save()),
+         ceded_port = list(are_Portfolio(basic_structure$layer,
+                                         name = "Basic non-cat ceded",
+                                         description = "Basic non-cat ceded",
+                                         meta_data = c(meta_data_list, perspective = "ceded")) %>%
+                             are_save()),
+         net_port = list(are_Portfolio(c(gross_layer$layer, basic_structure$layer),
+                                  name = "Basic non-cat net", description = "Basic non-cat net",
+                                  meta_data = c(meta_data_list, perspective = "net")) %>%
+                           are_save())) %>%
+  mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
+         ceded_view = list(are_PortfolioView(layer_views = basic_structure$layerview,
+                                        analysis_profile = analysis_profile) %>% are_save()),
+         net_view = list(are_PortfolioView(layer_views = c(gross_layer$layerview, basic_structure$layerview),
+                        analysis_profile = analysis_profile) %>% are_save())) %>%
+  mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+structure_portfolios %>%
+  select(-c(1:7))
 ```
 ```{r basic-portfolios-retrieve}
 # retrieve already created portfolios
 structure_portfolios <- tibble(structure_name = "Basic") %>% 
-  mutate(gross_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("3aba4ae5-72c7-4b53-a00a-cfa5f5563be8")),
-         ceded_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("3aba4ae5-72c7-4b53-a00a-cfa5f5563be8")),
-         net_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("840e5d2d-a281-4754-a33e-cca3f93451bd"))) %>% 
+  mutate(gross_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("1ed98acc-4ec5-483d-b40d-5abafe7b5724")),
+         ceded_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("d10c907b-945a-4ad4-849f-20161fac0098")),
+         net_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("fdccc493-ec72-4462-b787-923378f2439c"))) %>% 
   mutate(gross_view = list(are_PortfolioView(gross_port[[1]], analysis_profile = analysis_profile) %>% 
-           are_retrieve("404a0eb1-9a2d-4603-fedd-d07798621fbc")),
+           are_retrieve("9c016482-f1b7-990b-5eb8-638e000d58c6")),
          ceded_view = list(are_PortfolioView(ceded_port[[1]], analysis_profile = analysis_profile) %>% 
-           are_retrieve("e0f671c6-d155-396b-5f46-2a65da2116d4")),
+           are_retrieve("847cfaee-a97c-288d-b430-40953d50de10")),
          net_view = list(are_PortfolioView(net_port[[1]], analysis_profile = analysis_profile) %>% 
-           are_retrieve("9241b508-928e-b925-0ee0-2df23f9594e8"))) %>% 
+           are_retrieve("63de163e-1b7b-d1b8-c4e7-d56af0f5c497"))) %>% 
   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
 
 structure_portfolios2 <- structure_portfolios %>% 
@@ -282,12 +312,216 @@ structure_portfolios2 %>%
   knitr::kable(format.args = list(big.mark = ','))
 ```
 
+# Non-cat aggregate XL layer
 
+```{r create-agg-layer}
+# agg_layer <- are_Layer_Generic(loss_sets = list(),
+#                              participation = -1,
+#                              premium = 20e6,
+#                              limit = "Unlimited",
+#                              attachment = 0,
+#                              franchise = 0,
+#                              aggregate_limit = 0.2*300e6,
+#                              aggregate_attachment = 0.75 * 300e6,
+#                              description = "agg layer",
+#                              meta_data = c(meta_data_list, 
+#                                           perspective = "ceded",
+#                                           sage_layer_type = "noncat_agg_xl",
+#                                           rol = 20e6 / (0.2*300e6),
+#                                           rol_type = "agg")) %>%
+#   are_save() %>%
+#   are_Layer_Nested(sources = gross_layer$layer,
+#                    description = "Agg Layer",
+#                    meta_data = c(meta_data_list, 
+#                                  lossfilter_name = "all",
+#                                   perspective = "ceded",
+#                                   sage_layer_type = "noncat_agg_xl",
+#                                   rol = 20e6 / (0.2*300e6),
+#                                   rol_type = "agg")) %>%
+#   are_save()
+# agg_layer_view <- agg_layer %>%
+#   are_Layer_Nested(sink = get_filter_from_name(analysis_profile$loss_filters, 
+#                                                .$meta_data$lossfilter_name),
+#                                                sources = .) %>%
+#   are_LayerView(analysis_profile = analysis_profile) %>%
+#   are_save()
+```
+```{r agg-retrieve}
+agg_layer <- are_Layer() %>% 
+  are_retrieve("ae7201f5-136d-4a70-af7f-c8374c97ad38")
+agg_layer_view <- are_Layer() %>% 
+  are_LayerView() %>% 
+  are_retrieve("ee11f1e5-2290-7002-70c6-c11851614091")
+```
 
+```{r agg-create-portfolio}
+# # actually create and save the portfolios
+# structure_portfolios_agg <- tibble(structure_name = "Agg") %>%
+#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "Agg Gross", description = "Agg Gross",
+#                                          meta_data = c(meta_data_list, perspective = "gross")) %>% are_save()),
+#          ceded_port = list(are_Portfolio(agg_layer,
+#                                          name = "Agg ceded", description = "Agg ceded",
+#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>% are_save()),
+#          net_port = list(are_Portfolio(c(gross_layer$layer, agg_layer),
+#                                   name = "Agg net", description = "Agg net",
+#                                   meta_data = c(meta_data_list, perspective = "net")) %>% are_save())) %>%
+#   mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
+#          ceded_view =list(are_PortfolioView(analysis_profile = analysis_profile,
+#                                              layer_views = agg_layer_view) %>%
+#                             are_save()),
+#          net_view = list(are_PortfolioView(analysis_profile = analysis_profile,
+#                                            layer_views = c(gross_layer$layerview, agg_layer_view)) %>%
+#                            are_save())) %>%
+#   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+# structure_portfolios_agg %>%
+#   select(-c(1:7))
+```
+```{r agg-portfolios-retrieve}
+# retrieve already created portfolios
+structure_portfolios_agg <- tibble(structure_name = "Net agg") %>% 
+  mutate(gross_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("1812414b-998b-4dfb-b17a-736df80924ac")),
+         ceded_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("582a1b5c-45fe-4cae-90b4-6e5359a69dce")),
+         net_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("b3738501-019b-49b0-856e-e6b84e34420e"))) %>% 
+  mutate(gross_view = list(are_PortfolioView(gross_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("4185bb4f-c0ee-2e24-e32c-a96625550ad4")),
+         ceded_view = list(are_PortfolioView(ceded_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("76d5fc47-5c93-e68a-0689-c788af601d57")),
+         net_view = list(are_PortfolioView(net_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("6d270260-fc86-0785-35e9-88383be4512f"))) %>% 
+  mutate_at(-1,list(id = ~ map_chr(.x,"id")))
 
+structure_portfolios_agg <- structure_portfolios_agg %>% 
+  mutate_at(-1, as.list) %>% 
+  pivot_longer(cols = -structure_name, names_to = c("gcn","field","id"), names_sep = "_", values_to = "value") %>% 
+  mutate(id = if_else(is.na(id),"",id)) %>% 
+  pivot_wider(names_from = c(field, id), values_from = value) %>% 
+  mutate_at(5:6, as.character)
 
+structure_portfolios_agg %>% 
+  select(structure_name, port_id, view_id) %>% knitr::kable()
+```
 
+Create structure graph for net agg option.
 
+```{r graph-net-agg, fig.height=5.1, fig.width=6}
+gg_net_agg <- ggplot(data = basic_structure) +
+  geom_rect(aes(xmin = 0, xmax = 1, ymin = 0, ymax = 300), fill = "gray", colour = "white") +
+  geom_rect(aes(xmin = 0, xmax = 1, ymin = 0.75*300, ymax = 0.95*300), fill = "#002F6C", colour = "white") +
+  geom_text(aes(x = 0.5, y = (0.85*300), 
+                label = paste0(scales::dollar(0.2*300), "m xs ", scales::dollar(0.75*300) ,"m Agg XL")), 
+            colour = "white", size = 3) +
+  geom_text(aes(x = 0.5, y = 50, label = "Retention"), colour = "white", size = 3) +
+  scale_y_continuous(labels = scales::dollar_format(),
+                     breaks = c(0,50,100,150,200,250,300),
+                     expand = c(0,0)) +
+  theme(axis.line.y = element_blank()) +
+  ylab(NULL) + xlab(NULL) + scale_x_continuous(labels = NULL)
+gg_net_agg
+```
+
+# Non-cat quota share layer
+
+```{r create-qs-layer}
+# qs_layer <- are_Layer_Generic(loss_sets = list(),
+#                              participation = -0.25,
+#                              premium = get_layer_premium(gross_layer$layer),
+#                              limit = "Unlimited",
+#                              attachment = 0,
+#                              aggregate_limit = 5*get_layer_premium(gross_layer$layer),
+#                              aggregate_attachment = 0,
+#                              fees = are_Fee(type = "ProportionalExpense",
+#                                             amount_or_rate = 0.3),
+#                              description = "QS layer",
+#                              meta_data = c(meta_data_list, 
+#                                           perspective = "ceded",
+#                                           sage_layer_type = "noncat_qs")) %>%
+#   are_save() %>%
+#   are_Layer_Nested(sources = gross_layer$layer,
+#                    description = "QS Layer",
+#                    meta_data = c(meta_data_list, 
+#                                  lossfilter_name = "all",
+#                                   perspective = "ceded",
+#                                   sage_layer_type = "noncat_qs")) %>%
+#   are_save()
+# qs_layer_view <- qs_layer %>%
+#   are_Layer_Nested(sink = get_filter_from_name(analysis_profile$loss_filters, 
+#                                                .$meta_data$lossfilter_name),
+#                                                sources = .) %>%
+#   are_LayerView(analysis_profile = analysis_profile) %>%
+#   are_save()
+```
+```{r qs-retrieve}
+qs_layer <- are_Layer() %>% 
+  are_retrieve("c0b787c6-b0c9-4094-947d-d2f6a24ae5a9")
+qs_layer_view <- are_Layer() %>% 
+  are_LayerView() %>% 
+  are_retrieve("16c8b347-11ca-ab1c-86b2-56367796e7b5")
+```
+
+```{r qs-create-portfolio}
+# # actually create and save the portfolios
+# structure_portfolios_qs <- tibble(structure_name = "QS") %>%
+#   mutate(gross_port = list(are_Portfolio(gross_layer$layer, name = "QS Gross", description = "QS Gross",
+#                                          meta_data = c(meta_data_list, perspective = "gross")) %>% are_save()),
+#          ceded_port = list(are_Portfolio(qs_layer,
+#                                          name = "QS ceded", description = "QS ceded",
+#                                          meta_data = c(meta_data_list, perspective = "ceded")) %>% are_save()),
+#          net_port = list(are_Portfolio(c(gross_layer$layer, qs_layer),
+#                                   name = "QS net", description = "QS net",
+#                                   meta_data = c(meta_data_list, perspective = "net")) %>% are_save())) %>%
+#   mutate(gross_view = map(gross_port, ~ .x %>% are_PortfolioView(analysis_profile = analysis_profile) %>% are_save()),
+#          ceded_view =list(are_PortfolioView(analysis_profile = analysis_profile,
+#                                              layer_views = qs_layer_view) %>%
+#                             are_save()),
+#          net_view = list(are_PortfolioView(analysis_profile = analysis_profile,
+#                                            layer_views = c(gross_layer$layerview, qs_layer_view)) %>%
+#                            are_save())) %>%
+#   mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+# structure_portfolios_qs %>%
+#   select(-c(1:7))
+```
+```{r qs-portfolios-retrieve}
+# retrieve already created portfolios
+structure_portfolios_agg <- tibble(structure_name = "Net QS") %>% 
+  mutate(gross_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("1bcf2ac1-d9ba-48ea-8886-1e2c5512af1e")),
+         ceded_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("5d29aa34-50ef-47bf-b179-4d8752112bcd")),
+         net_port = list(are_Portfolio(are_Layer()) %>% are_retrieve("d734fbfc-9592-4c73-afe4-f84f32afaa43"))) %>% 
+  mutate(gross_view = list(are_PortfolioView(gross_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("af07b1cb-5f8f-8af2-1575-3b7912315cd4")),
+         ceded_view = list(are_PortfolioView(ceded_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("a309be63-6a14-d02c-e7bd-6b36f1702ed2")),
+         net_view = list(are_PortfolioView(net_port[[1]], analysis_profile = analysis_profile) %>% 
+           are_retrieve("56037ece-babf-85fc-3a30-1dae3433f2c3"))) %>% 
+  mutate_at(-1,list(id = ~ map_chr(.x,"id")))
+
+structure_portfolios_qs2 <- structure_portfolios_qs %>% 
+  mutate_at(-1, as.list) %>% 
+  pivot_longer(cols = -structure_name, names_to = c("gcn","field","id"), names_sep = "_", values_to = "value") %>% 
+  mutate(id = if_else(is.na(id),"",id)) %>% 
+  pivot_wider(names_from = c(field, id), values_from = value) %>% 
+  mutate_at(5:6, as.character)
+
+structure_portfolios_qs2 %>% 
+  select(structure_name, port_id, view_id) %>% knitr::kable()
+```
+
+Create structure graph for net qs option.
+
+```{r graph-net-qs, fig.height=5.1, fig.width=6}
+gg_net_qs <- 
+  ggplot(data = basic_structure) +
+  geom_rect(aes(xmin = 0, xmax = 1, ymin = 0, ymax = 300), fill = "#002F6C", colour = "white") +
+  geom_rect(aes(xmin = 0, xmax = 0.75, ymin = 0, ymax = 300), fill = "gray", colour = "white") +
+  geom_text(aes(x = 0.875, y = 150, label = "25% QS"), 
+            colour = "white", size = 3) +
+  geom_text(aes(x = 0.75/2, y = 150, label = "Retention"), colour = "white", size = 3) +
+  scale_y_continuous(labels = scales::dollar_format(),
+                     breaks = c(0,50,100,150,200,250,300),
+                     expand = c(0,0)) +
+  theme(axis.line.y = element_blank()) +
+  ylab(NULL) + xlab(NULL) + scale_x_continuous(labels = NULL)
+gg_net_qs
+```
 
 
 ```{r write-to-pptx, include=FALSE}
@@ -297,7 +531,11 @@ library(rvg)
 pptx <- read_pptx("c:/temp/Lockton_template.pptx") %>% 
   add_slide(layout = "Title and Content", master = "Segoe Yellow Angle") %>% 
   ph_with(dml(ggobj = gg_basic_structure), location = ph_location(type = "body", height = 5.1, width = 3)) %>% 
-  print(target = "structure-graphs-non-cat.pptx")
+  add_slide(layout = "Title and Content", master = "Segoe Yellow Angle") %>% 
+  ph_with(dml(ggobj = gg_net_agg), location = ph_location(type = "body", height = 5.1, width = 3)) %>% 
+  add_slide(layout = "Title and Content", master = "Segoe Yellow Angle") %>% 
+  ph_with(dml(ggobj = gg_net_qs), location = ph_location(type = "body", height = 5.1, width = 3)) %>% 
+  print(target = "structure-graphs-non-cat2.pptx")
 
 ```
 
