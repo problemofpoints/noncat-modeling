@@ -37,48 +37,20 @@ event_catalog <- are_EventCatalog(description = "3 non-cat lob example",
   are_save() %>% 
   are_upload_data(data_or_file = event_catalog_data)
 
-yelt <- are_LossSet(type = "YELTLossSet",
-                    event_catalogs = event_catalog,
-                    loss_type = "LossGross",
-                    description = "3 non-cat lob example",
-                    start_date = "2020-01-01",
-                    trial_count = 10000,
-                    meta_data = meta_data_list) %>% 
-  are_save() %>% 
-  are_upload_data(noncat_yelt %>% select(trialid, eventid, day, loss))
 
-yelt1 <- are_LossSet(type = "YELTLossSet",
-                    event_catalogs = event_catalog,
-                    loss_type = "LossGross",
-                    description = "3 non-cat lob example - lob1",
-                    start_date = "2020-01-01",
-                    trial_count = 10000,
-                    meta_data = c(meta_data_list, "lob" = 1)) %>% 
-  are_save() %>% 
-  are_upload_data(noncat_yelt %>% filter(lob_num == 1) %>% 
-                    select(trialid, eventid, day, loss))
-
-yelt2 <- are_LossSet(type = "YELTLossSet",
-                    event_catalogs = event_catalog,
-                    loss_type = "LossGross",
-                    description = "3 non-cat lob example - lob2",
-                    start_date = "2020-01-01",
-                    trial_count = 10000,
-                    meta_data = c(meta_data_list, "lob" = 2)) %>% 
-  are_save() %>% 
-  are_upload_data(noncat_yelt %>% filter(lob_num == 2) %>% 
-                    select(trialid, eventid, day, loss))
-
-yelt3 <- are_LossSet(type = "YELTLossSet",
-                    event_catalogs = event_catalog,
-                    loss_type = "LossGross",
-                    description = "3 non-cat lob example - lob3",
-                    start_date = "2020-01-01",
-                    trial_count = 10000,
-                    meta_data = c(meta_data_list, "lob" = 3)) %>% 
-  are_save() %>% 
-  are_upload_data(noncat_yelt %>% filter(lob_num == 3) %>% 
-                    select(trialid, eventid, day, loss))
+noncat_yelt %>% 
+  group_by(lob_num, loss_type) %>% 
+  group_walk(~ are_LossSet(description = paste0("XYZ Ins Co non-cat","_", .y$lob_num[1], "_", .y$loss_type[1]),
+                           type = "YELTLossSet",
+                           event_catalogs = are_EventCatalog() %>% 
+                             are_retrieve("1966ae09-7084-41a3-aebd-cd743eb7455d"),
+                           trial_count = 10000,
+                           meta_data = c(meta_data_list,
+                             "lob_num" = .y$lob_num[1],
+                             "loss_type" = .y$loss_type[1])
+                           ) %>% 
+    are_save() %>% 
+    are_upload_data(.x %>% select(trialid, eventid, day, loss)))
 
 
 simulate_set <- are_StaticSimulation(name = "3 non-cat lob example",
